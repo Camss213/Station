@@ -1,4 +1,5 @@
 import {
+  CircleAlert,
   Download,
   Fuel,
   List,
@@ -34,9 +35,13 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
   return debouncedValue;
 }
 
-function requestCurrentPosition(setPosition: (value: { lat: number; lng: number }) => void) {
+function requestCurrentPosition(
+  setPosition: (value: { lat: number; lng: number }) => void,
+  onDenied?: () => void
+) {
   if (!navigator.geolocation) {
     setPosition(DEFAULT_POSITION);
+    onDenied?.();
     return;
   }
 
@@ -49,6 +54,7 @@ function requestCurrentPosition(setPosition: (value: { lat: number; lng: number 
     },
     () => {
       setPosition(DEFAULT_POSITION);
+      onDenied?.();
     },
     {
       enableHighAccuracy: true,
@@ -76,6 +82,14 @@ function getStationSubtitle(station: StationItem) {
   return station.address;
 }
 
+function shouldShowAddressLine(station: StationItem) {
+  const title = getStationTitle(station).trim().toLowerCase();
+  const subtitle = getStationSubtitle(station).trim().toLowerCase();
+  const address = station.address.trim().toLowerCase();
+
+  return address !== title && address !== subtitle;
+}
+
 export function StationList() {
   const [stations, setStations] = useState<StationItem[]>([]);
   const [query, setQuery] = useState("");
@@ -90,12 +104,13 @@ export function StationList() {
   const [totalCount, setTotalCount] = useState<number | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [showLocationModal, setShowLocationModal] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 350);
   const hasActiveSearch = debouncedQuery.trim().length > 0;
   const useNearbyScope = scope === "nearby" && !hasActiveSearch;
 
   useEffect(() => {
-    requestCurrentPosition(setPosition);
+    requestCurrentPosition(setPosition, () => setShowLocationModal(true));
     preloadOfficialDataset();
   }, []);
 
@@ -208,7 +223,9 @@ export function StationList() {
             </div>
             <button
               className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-mint/30 bg-mint/10 text-mint"
-              onClick={() => requestCurrentPosition(setPosition)}
+              onClick={() =>
+                requestCurrentPosition(setPosition, () => setShowLocationModal(true))
+              }
               type="button"
             >
               <LocateFixed className="h-5 w-5" />
@@ -226,7 +243,7 @@ export function StationList() {
               />
             </label>
 
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            <div className="flex justify-center gap-2 pb-1">
               <button
                 className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm ${
                   scope === "france"
@@ -251,24 +268,45 @@ export function StationList() {
               </button>
             </div>
 
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {fuelOptions.map((option) => (
-                <button
-                  key={option}
-                  className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm ${
-                    option === fuelType
-                      ? "border-mint bg-mint text-ink"
-                      : "border-white/10 bg-white/5 text-slate-300"
-                  }`}
-                  onClick={() => setFuelType(option)}
-                  type="button"
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <Fuel className="h-4 w-4" />
-                    {option}
-                  </span>
-                </button>
-              ))}
+            <div className="grid gap-2">
+              <div className="grid grid-cols-3 gap-2">
+                {fuelOptions.slice(0, 3).map((option) => (
+                  <button
+                    key={option}
+                    className={`rounded-full border px-3 py-3 text-sm ${
+                      option === fuelType
+                        ? "border-mint bg-mint text-ink"
+                        : "border-white/10 bg-white/5 text-slate-300"
+                    }`}
+                    onClick={() => setFuelType(option)}
+                    type="button"
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <Fuel className="h-4 w-4" />
+                      {option}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div className="mx-auto grid w-[70%] grid-cols-2 gap-2">
+                {fuelOptions.slice(3).map((option) => (
+                  <button
+                    key={option}
+                    className={`rounded-full border px-3 py-3 text-sm ${
+                      option === fuelType
+                        ? "border-mint bg-mint text-ink"
+                        : "border-white/10 bg-white/5 text-slate-300"
+                    }`}
+                    onClick={() => setFuelType(option)}
+                    type="button"
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <Fuel className="h-4 w-4" />
+                      {option}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </header>
@@ -384,7 +422,7 @@ export function StationList() {
 
                   <div className="mt-4 flex items-center justify-between text-sm text-slate-300">
                     <div>
-                      <p>{station.address}</p>
+                      {shouldShowAddressLine(station) ? <p>{station.address}</p> : null}
                       <p className="text-slate-500">
                         {station.postalCode ? `${station.postalCode} ` : ""}
                         {station.city}
@@ -411,6 +449,45 @@ export function StationList() {
           </section>
         ) : null}
       </section>
+
+      {showLocationModal ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center">
+          <div className="w-full max-w-sm rounded-[28px] border border-white/10 bg-panel p-5 shadow-glow">
+            <div className="flex items-start gap-3">
+              <div className="rounded-2xl border border-amber/30 bg-amber/10 p-3 text-amber">
+                <CircleAlert className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-white">Active la localisation</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">
+                  Autorise la localisation pour afficher les stations les plus proches de chez
+                  toi et calculer correctement les distances.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 flex gap-2">
+              <button
+                className="flex-1 rounded-full border border-white/10 px-4 py-3 text-sm text-slate-300"
+                onClick={() => setShowLocationModal(false)}
+                type="button"
+              >
+                Plus tard
+              </button>
+              <button
+                className="flex-1 rounded-full bg-mint px-4 py-3 text-sm font-medium text-ink"
+                onClick={() => {
+                  setShowLocationModal(false);
+                  requestCurrentPosition(setPosition, () => setShowLocationModal(true));
+                }}
+                type="button"
+              >
+                Reessayer
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
