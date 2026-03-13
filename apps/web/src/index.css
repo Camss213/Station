@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  background: #081014;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #081014;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.leaflet-container {
+  background: #081014;
+  color: #e2e8f0;
+}
+
+.fuel-user-pin,
+.fuel-station-pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fuel-user-pin__dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  border: 3px solid rgba(8, 16, 20, 0.85);
+  background: #4ade80;
+  box-shadow: 0 0 0 6px rgba(74, 222, 128, 0.18);
+}
+
+.fuel-station-pin__dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  border: 3px solid rgba(8, 16, 20, 0.85);
+  background: #f8fafc;
+  box-shadow: 0 0 0 5px rgba(248, 250, 252, 0.18);
+}
