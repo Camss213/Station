@@ -1,17 +1,27 @@
 import {
+  ArrowDownUp,
   CircleAlert,
   Download,
+  ExternalLink,
   Fuel,
+  Heart,
+  LayoutGrid,
   List,
   LoaderCircle,
   LocateFixed,
   MapPinned,
   Search,
+  Star,
   TriangleAlert,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { preloadOfficialDataset, searchStations } from "../lib/api";
+import {
+  getSearchSuggestions,
+  preloadOfficialDataset,
+  searchStations,
+  type SearchSuggestion,
+} from "../lib/api";
 import type { FuelType, StationItem } from "../lib/fuel";
 import { StationMap } from "./StationMap";
 
@@ -23,6 +33,7 @@ type BeforeInstallPromptEvent = Event & {
 const fuelOptions: FuelType[] = ["Gazole", "SP95", "SP98", "E10", "E85"];
 const DEFAULT_POSITION = { lat: 48.8566, lng: 2.3522 };
 const PAGE_SIZE = 40;
+const FAVORITES_STORAGE_KEY = "hakoway-favorites";
 
 function useDebouncedValue<T>(value: T, delayMs: number) {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -90,6 +101,29 @@ function shouldShowAddressLine(station: StationItem) {
   return address !== title && address !== subtitle;
 }
 
+function getMapsLink(station: StationItem) {
+  if (station.latitude !== null && station.longitude !== null) {
+    return `https://www.google.com/maps/search/?api=1&query=${station.latitude},${station.longitude}`;
+  }
+
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    `${station.address}, ${station.postalCode ?? ""} ${station.city}`
+  )}`;
+}
+
+function loadFavorites() {
+  try {
+    const raw = window.localStorage.getItem(FAVORITES_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export function StationList() {
   const [stations, setStations] = useState<StationItem[]>([]);
   const [query, setQuery] = useState("");
@@ -97,14 +131,18 @@ export function StationList() {
   const [position, setPosition] = useState<{ lat: number; lng: number } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"list" | "map">("list");
-  const [scope, setScope] = useState<"nearby" | "france">("france");
+  const [view, setView] = useState<"list" | "grid" | "map">("list");
+  const [scope, setScope] = useState<"nearby" | "france">("nearby");
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [totalCount, setTotalCount] = useState<number | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showLocationModal, setShowLocationModal] = useState(false);
+  const [sortBy, setSortBy] = useState<"price" | "distance" | "name">("price");
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const debouncedQuery = useDebouncedValue(query, 350);
   const hasActiveSearch = debouncedQuery.trim().length > 0;
   const useNearbyScope = scope === "nearby" && !hasActiveSearch;
@@ -112,6 +150,7 @@ export function StationList() {
   useEffect(() => {
     requestCurrentPosition(setPosition, () => setShowLocationModal(true));
     preloadOfficialDataset();
+    setFavorites(loadFavorites());
   }, []);
 
   useEffect(() => {
@@ -127,6 +166,27 @@ export function StationList() {
   useEffect(() => {
     const controller = new AbortController();
 
+    async function loadSuggestions() {
+      if (debouncedQuery.trim().length < 2) {
+        setSuggestions([]);
+        return;
+      }
+
+      try {
+        const result = await getSearchSuggestions(debouncedQuery);
+        setSuggestions(result);
+      } catch {
+        setSuggestions([]);
+      }
+    }
+
+    void loadSuggestions();
+    return () => controller.abort();
+  }, [debouncedQuery]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
     async function loadStations() {
       setIsLoading(true);
       setError(null);
@@ -136,8 +196,9 @@ export function StationList() {
           fuelType,
           query: debouncedQuery,
           radiusKm: useNearbyScope ? 20 : 1000,
-          lat: useNearbyScope ? position?.lat : null,
-          lng: useNearbyScope ? position?.lng : null,
+          lat: position?.lat ?? null,
+          lng: position?.lng ?? null,
+          useDistanceFilter: useNearbyScope,
           signal: controller.signal,
           offset: 0,
           limit: PAGE_SIZE,
@@ -179,8 +240,9 @@ export function StationList() {
         fuelType,
         query: debouncedQuery,
         radiusKm: useNearbyScope ? 20 : 1000,
-        lat: useNearbyScope ? position?.lat : null,
-        lng: useNearbyScope ? position?.lng : null,
+        lat: position?.lat ?? null,
+        lng: position?.lng ?? null,
+        useDistanceFilter: useNearbyScope,
         offset,
         limit: PAGE_SIZE,
       });
@@ -205,16 +267,41 @@ export function StationList() {
     setInstallPrompt(null);
   }
 
-  const filteredStations = [...stations].sort(
-    (left, right) => left.price - right.price || (left.distanceKm ?? 999) - (right.distanceKm ?? 999)
-  );
+  function toggleFavorite(stationId: string) {
+    setFavorites((current) => {
+      const next = current.includes(stationId)
+        ? current.filter((id) => id !== stationId)
+        : [...current, stationId];
+      window.localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function applySuggestion(suggestion: SearchSuggestion) {
+    setQuery(suggestion.query);
+    setSuggestions([]);
+  }
+
+  const filteredStations = [...stations]
+    .filter((station) => !favoritesOnly || favorites.includes(station.stationId))
+    .sort((left, right) => {
+      if (sortBy === "distance") {
+        return (left.distanceKm ?? 999) - (right.distanceKm ?? 999) || left.price - right.price;
+      }
+      if (sortBy === "name") {
+        return getStationTitle(left).localeCompare(getStationTitle(right), "fr", {
+          sensitivity: "base",
+        });
+      }
+      return left.price - right.price || (left.distanceKm ?? 999) - (right.distanceKm ?? 999);
+    });
 
   const cheapestPrice = filteredStations[0]?.price ?? null;
   const highestPrice = filteredStations.at(-1)?.price ?? null;
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(74,222,128,0.16),_transparent_35%),linear-gradient(180deg,_#081014_0%,_#0d171d_45%,_#081014_100%)] px-4 py-6 text-slate-100">
-      <section className="mx-auto flex max-w-xl flex-col gap-4">
+    <main className="min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_top,_rgba(74,222,128,0.16),_transparent_35%),linear-gradient(180deg,_#081014_0%,_#0d171d_45%,_#081014_100%)] px-3 py-4 text-slate-100 sm:px-4 sm:py-6">
+      <section className="mx-auto flex w-full max-w-xl min-w-0 flex-col gap-4">
         <header className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-glow backdrop-blur">
           <div className="flex items-center justify-between">
             <div>
@@ -243,18 +330,22 @@ export function StationList() {
               />
             </label>
 
+            {suggestions.length > 0 ? (
+              <div className="rounded-2xl border border-white/10 bg-panel/95 p-2">
+                {suggestions.map((suggestion) => (
+                  <button
+                    key={`${suggestion.label}-${suggestion.query}`}
+                    className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/5"
+                    onClick={() => applySuggestion(suggestion)}
+                    type="button"
+                  >
+                    {suggestion.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
             <div className="flex justify-center gap-2 pb-1">
-              <button
-                className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm ${
-                  scope === "france"
-                    ? "border-mint bg-mint text-ink"
-                    : "border-white/10 bg-white/5 text-slate-300"
-                }`}
-                onClick={() => setScope("france")}
-                type="button"
-              >
-                France entiere
-              </button>
               <button
                 className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm ${
                   scope === "nearby"
@@ -265,6 +356,17 @@ export function StationList() {
                 type="button"
               >
                 Autour de moi
+              </button>
+              <button
+                className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm ${
+                  scope === "france"
+                    ? "border-mint bg-mint text-ink"
+                    : "border-white/10 bg-white/5 text-slate-300"
+                }`}
+                onClick={() => setScope("france")}
+                type="button"
+              >
+                France entiere
               </button>
             </div>
 
@@ -311,7 +413,7 @@ export function StationList() {
           </div>
         </header>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 min-[380px]:grid-cols-2">
           <div className="rounded-3xl border border-mint/20 bg-mint/10 p-4">
             <p className="text-xs uppercase tracking-[0.2em] text-mint/80">Moins cher</p>
             <p className="mt-2 text-2xl font-semibold">
@@ -326,15 +428,45 @@ export function StationList() {
           </div>
         </div>
 
-        <div className="flex items-center justify-between text-sm text-slate-400">
-          <p>
+        <div className="flex flex-col gap-3 text-sm text-slate-400 min-[430px]:flex-row min-[430px]:items-center min-[430px]:justify-between">
+          <p className="max-w-full">
             {isLoading
               ? "Chargement..."
               : `${filteredStations.length} stations chargees${
                   totalCount !== null ? ` / ${totalCount}` : ""
                 }${useNearbyScope ? " autour de vous" : " sur la France"}`}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-2 min-[430px]:justify-start">
+            <div className="flex min-w-0 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-slate-300">
+              <ArrowDownUp className="h-4 w-4" />
+              <select
+                className="min-w-0 bg-transparent text-sm outline-none"
+                onChange={(event) => setSortBy(event.target.value as "price" | "distance" | "name")}
+                value={sortBy}
+              >
+                <option className="bg-ink text-white" value="price">
+                  Prix
+                </option>
+                <option className="bg-ink text-white" value="distance">
+                  Distance
+                </option>
+                <option className="bg-ink text-white" value="name">
+                  Nom
+                </option>
+              </select>
+            </div>
+            <button
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 ${
+                favoritesOnly
+                  ? "border-mint/30 bg-mint/10 text-mint"
+                  : "border-white/10 bg-white/5 text-slate-300"
+              }`}
+              onClick={() => setFavoritesOnly((current) => !current)}
+              type="button"
+            >
+              <Star className="h-4 w-4" />
+              Favoris
+            </button>
             {installPrompt ? (
               <button
                 className="inline-flex items-center gap-2 rounded-full border border-mint/30 bg-mint/10 px-3 py-2 text-mint"
@@ -345,26 +477,36 @@ export function StationList() {
                 Installer
               </button>
             ) : null}
-            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1">
+            <div className="grid w-full grid-cols-3 rounded-full border border-white/10 bg-white/5 p-1 min-[430px]:flex min-[430px]:w-auto min-[430px]:items-center min-[430px]:gap-2">
               <button
-                className={`inline-flex items-center gap-2 rounded-full px-3 py-2 ${
+                className={`inline-flex items-center justify-center gap-2 rounded-full px-3 py-2 ${
                   view === "list" ? "bg-mint text-ink" : "text-slate-300"
                 }`}
                 onClick={() => setView("list")}
                 type="button"
               >
-                <List className="h-4 w-4" />
-                Liste
+                <List className="h-4 w-4 shrink-0" />
+                <span className="hidden min-[360px]:inline">Liste</span>
               </button>
               <button
-                className={`inline-flex items-center gap-2 rounded-full px-3 py-2 ${
+                className={`inline-flex items-center justify-center gap-2 rounded-full px-3 py-2 ${
+                  view === "grid" ? "bg-mint text-ink" : "text-slate-300"
+                }`}
+                onClick={() => setView("grid")}
+                type="button"
+              >
+                <LayoutGrid className="h-4 w-4 shrink-0" />
+                <span className="hidden min-[360px]:inline">Grille</span>
+              </button>
+              <button
+                className={`inline-flex items-center justify-center gap-2 rounded-full px-3 py-2 ${
                   view === "map" ? "bg-mint text-ink" : "text-slate-300"
                 }`}
                 onClick={() => setView("map")}
                 type="button"
               >
-                <MapPinned className="h-4 w-4" />
-                Carte
+                <MapPinned className="h-4 w-4 shrink-0" />
+                <span className="hidden min-[360px]:inline">Carte</span>
               </button>
             </div>
           </div>
@@ -394,8 +536,14 @@ export function StationList() {
           <StationMap stations={filteredStations} center={position} />
         ) : null}
 
-        {!isLoading && !error && filteredStations.length > 0 && view === "list" ? (
-          <section className="flex flex-col gap-3">
+        {!isLoading && !error && filteredStations.length > 0 && view !== "map" ? (
+          <section
+            className={
+              view === "grid"
+                ? "grid grid-cols-2 gap-3"
+                : "flex flex-col gap-3"
+            }
+          >
             {filteredStations.map((station, index) => {
               const accent =
                 index === 0
@@ -403,42 +551,151 @@ export function StationList() {
                   : index === filteredStations.length - 1
                     ? "border-coral/20 bg-coral/10"
                     : "border-white/10 bg-white/5";
+              const isGridView = view === "grid";
 
               return (
                 <article
                   key={`${station.stationId}-${station.fuelType}`}
-                  className={`rounded-[24px] border p-4 shadow-glow backdrop-blur ${accent}`}
+                  className={`rounded-[22px] border shadow-glow backdrop-blur min-[380px]:rounded-[24px] ${
+                    isGridView ? "p-3" : "p-2.5 min-[380px]:p-3"
+                  } ${accent}`}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-lg font-semibold">{getStationTitle(station)}</p>
-                      <p className="text-sm text-slate-400">{getStationSubtitle(station)}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-2xl font-semibold">{station.price.toFixed(3)} EUR</p>
-                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">par litre</p>
-                    </div>
-                  </div>
+                  {isGridView ? (
+                    <div className="flex h-full flex-col gap-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="line-clamp-2 text-base font-semibold leading-tight min-[380px]:text-lg">
+                            {getStationTitle(station)}
+                          </p>
+                          <p className="mt-0.5 line-clamp-2 text-xs text-slate-400 min-[380px]:text-sm">
+                            {station.postalCode ? `${station.postalCode} ` : ""}
+                            {station.city}
+                          </p>
+                        </div>
+                        <button
+                          className={`shrink-0 rounded-full border p-2 ${
+                            favorites.includes(station.stationId)
+                              ? "border-mint/30 bg-mint/15 text-mint"
+                              : "border-white/10 bg-white/5 text-slate-300"
+                          }`}
+                          onClick={() => toggleFavorite(station.stationId)}
+                          type="button"
+                        >
+                          <Heart
+                            className="h-4 w-4"
+                            fill={favorites.includes(station.stationId) ? "currentColor" : "none"}
+                          />
+                        </button>
+                      </div>
 
-                  <div className="mt-4 flex items-center justify-between text-sm text-slate-300">
-                    <div>
-                      {shouldShowAddressLine(station) ? <p>{station.address}</p> : null}
-                      <p className="text-slate-500">
-                        {station.postalCode ? `${station.postalCode} ` : ""}
-                        {station.city}
-                      </p>
+                      <div className="rounded-2xl border border-white/10 bg-ink/30 p-2.5 min-[380px]:p-3">
+                        <p className="text-lg font-semibold min-[380px]:text-xl">
+                          {station.price.toFixed(3)} EUR
+                        </p>
+                        <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                          par litre
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="min-w-0 flex-1 rounded-2xl bg-ink/60 px-3 py-2">
+                          <p className="truncate text-sm font-medium">
+                            {formatDistance(station.distanceKm)}
+                          </p>
+                          <p className="text-xs text-slate-500">{station.fuelType}</p>
+                        </div>
+                        <a
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-2xl border border-mint/20 bg-mint/10 px-2.5 py-2 text-[11px] text-mint min-[380px]:gap-2 min-[380px]:px-3 min-[380px]:text-xs"
+                          href={getMapsLink(station)}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          <span className="hidden min-[380px]:inline">Maps</span>
+                        </a>
+                      </div>
+
+                      {shouldShowAddressLine(station) ? (
+                        <p className="mt-auto text-xs text-slate-400 min-[380px]:text-sm">
+                          {station.address}
+                        </p>
+                      ) : null}
                     </div>
-                    <div className="rounded-2xl bg-ink/60 px-3 py-2 text-right">
-                      <p className="font-medium">{formatDistance(station.distanceKm)}</p>
-                      <p className="text-xs text-slate-500">{station.fuelType}</p>
-                    </div>
-                  </div>
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[15px] font-semibold leading-tight min-[380px]:text-base">
+                            {getStationTitle(station)}
+                          </p>
+                          <p className="mt-0.5 line-clamp-1 text-[11px] text-slate-400 min-[380px]:text-xs">
+                            {getStationSubtitle(station)}
+                          </p>
+                          <p className="mt-2 text-xs text-slate-500 min-[380px]:text-sm">
+                            {station.postalCode ? `${station.postalCode} ` : ""}
+                            {station.city}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-start gap-2">
+                          <button
+                            className={`rounded-full border p-2 ${
+                              favorites.includes(station.stationId)
+                                ? "border-mint/30 bg-mint/15 text-mint"
+                                : "border-white/10 bg-white/5 text-slate-300"
+                            }`}
+                            onClick={() => toggleFavorite(station.stationId)}
+                            type="button"
+                          >
+                            <Heart
+                              className="h-4 w-4"
+                              fill={favorites.includes(station.stationId) ? "currentColor" : "none"}
+                            />
+                          </button>
+                          <div className="rounded-2xl border border-white/10 bg-ink/30 px-3 py-2 text-right">
+                            <p className="text-base font-semibold min-[380px]:text-lg">
+                              {station.price.toFixed(3)} EUR
+                            </p>
+                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400 min-[380px]:text-[11px]">
+                              par litre
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-end justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          {shouldShowAddressLine(station) ? (
+                            <p className="line-clamp-1 text-xs text-slate-300 min-[380px]:text-sm">
+                              {station.address}
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <a
+                            className="inline-flex items-center gap-1.5 rounded-2xl border border-mint/20 bg-mint/10 px-2.5 py-2 text-[11px] text-mint min-[380px]:gap-2 min-[380px]:px-3 min-[380px]:text-xs"
+                            href={getMapsLink(station)}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            <span className="hidden min-[380px]:inline">Maps</span>
+                          </a>
+                          <div className="rounded-2xl bg-ink/60 px-2.5 py-2 text-right min-[380px]:px-3">
+                            <p className="text-sm font-medium">{formatDistance(station.distanceKm)}</p>
+                            <p className="text-xs text-slate-500">{station.fuelType}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </article>
               );
             })}
             {scope === "france" && hasMore ? (
               <button
-                className="rounded-[24px] border border-white/10 bg-white/5 px-4 py-4 text-sm text-slate-200"
+                className={`rounded-[24px] border border-white/10 bg-white/5 px-4 py-4 text-sm text-slate-200 ${
+                  view === "grid" ? "col-span-2" : ""
+                }`}
                 disabled={isLoadingMore}
                 onClick={() => void loadMoreStations()}
                 type="button"

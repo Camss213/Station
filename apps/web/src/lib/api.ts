@@ -10,6 +10,7 @@ type SearchStationsParams = {
   radiusKm: number;
   lat?: number | null;
   lng?: number | null;
+  useDistanceFilter?: boolean;
   signal?: AbortSignal;
   offset?: number;
   limit?: number;
@@ -19,6 +20,11 @@ export type SearchStationsResult = {
   stations: StationItem[];
   hasMore: boolean;
   totalCount: number | null;
+};
+
+export type SearchSuggestion = {
+  label: string;
+  query: string;
 };
 
 type OfficialStationRecord = {
@@ -116,6 +122,18 @@ function normalizeText(value: string) {
     .trim();
 }
 
+function uniqueBy<T>(items: T[], getKey: (item: T) => string) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = getKey(item);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
 function pickStationName(record: OfficialStationRecord) {
   const candidates = [record.enseigne, record.nom, record.name, record.brand, record.pop]
     .filter((value): value is string => typeof value === "string")
@@ -133,6 +151,7 @@ function buildCacheKey({
   radiusKm,
   lat,
   lng,
+  useDistanceFilter = false,
   offset = 0,
   limit = 100,
 }: SearchStationsParams) {
@@ -142,6 +161,7 @@ function buildCacheKey({
     radiusKm,
     lat: lat === null || lat === undefined ? null : Number(lat.toFixed(3)),
     lng: lng === null || lng === undefined ? null : Number(lng.toFixed(3)),
+    useDistanceFilter,
     offset,
     limit,
   });
@@ -275,6 +295,7 @@ async function searchStationsOfficial({
   radiusKm,
   lat,
   lng,
+  useDistanceFilter,
   signal,
   offset = 0,
   limit = 100,
@@ -299,10 +320,16 @@ async function searchStationsOfficial({
   if (normalizedQuery) {
     const fullDataset = await fetchFullDataset(signal);
     const searchedStations = applyLocalSearch(fullDataset, fuelType, query, lat, lng, radiusKm);
+    const visibleStations = searchedStations.filter((station) => {
+      if (!useDistanceFilter || station.distanceKm === null) {
+        return true;
+      }
+      return station.distanceKm <= radiusKm;
+    });
     result = {
-      stations: searchedStations.slice(offset, offset + limit),
-      hasMore: offset + limit < searchedStations.length,
-      totalCount: searchedStations.length,
+      stations: visibleStations.slice(offset, offset + limit),
+      hasMore: offset + limit < visibleStations.length,
+      totalCount: visibleStations.length,
     };
   } else {
     const fuelKeys = getFuelKeys(fuelType);
@@ -314,7 +341,7 @@ async function searchStationsOfficial({
 
     const whereClauses: string[] = [`${fuelKeys.price} is not null`];
 
-    if (typeof lat === "number" && typeof lng === "number") {
+    if (useDistanceFilter && typeof lat === "number" && typeof lng === "number") {
       whereClauses.push(`within_distance(geom, geom'POINT(${lng} ${lat})', ${radiusKm}km)`);
     }
 
@@ -386,6 +413,46 @@ async function searchStationsLocal(params: SearchStationsParams): Promise<Search
 
 export function preloadOfficialDataset() {
   void fetchFullDataset();
+}
+
+export async function getSearchSuggestions(
+  query: string,
+  limit = 6
+): Promise<SearchSuggestion[]> {
+  const normalizedQuery = normalizeText(query);
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  const dataset = await fetchFullDataset();
+  const suggestions = dataset.flatMap((record) => {
+    const city = String(record.ville ?? "").trim();
+    const postalCode = String(record.cp ?? "").trim();
+    const address = String(record.adresse ?? "").trim();
+
+    const entries: SearchSuggestion[] = [];
+    if (city && normalizeText(city).includes(normalizedQuery)) {
+      entries.push({
+        label: postalCode ? `${city} (${postalCode})` : city,
+        query: city,
+      });
+    }
+    if (postalCode && normalizeText(postalCode).includes(normalizedQuery)) {
+      entries.push({
+        label: city ? `${postalCode} - ${city}` : postalCode,
+        query: postalCode,
+      });
+    }
+    if (address && normalizeText(address).includes(normalizedQuery)) {
+      entries.push({
+        label: city ? `${address}, ${city}` : address,
+        query: address,
+      });
+    }
+    return entries;
+  });
+
+  return uniqueBy(suggestions, (item) => `${item.label}-${item.query}`).slice(0, limit);
 }
 
 export async function searchStations(params: SearchStationsParams): Promise<SearchStationsResult> {

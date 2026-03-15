@@ -24,6 +24,36 @@ const stationIcon = L.divIcon({
   iconAnchor: [9, 9],
 });
 
+function getMapsLinks(station: StationItem) {
+  if (station.latitude === null || station.longitude === null) {
+    return {
+      google: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+        `${station.address}, ${station.postalCode ?? ""} ${station.city}`
+      )}`,
+      apple: `https://maps.apple.com/?q=${encodeURIComponent(
+        `${station.address}, ${station.postalCode ?? ""} ${station.city}`
+      )}`,
+    };
+  }
+
+  return {
+    google: `https://www.google.com/maps/search/?api=1&query=${station.latitude},${station.longitude}`,
+    apple: `https://maps.apple.com/?ll=${station.latitude},${station.longitude}&q=${encodeURIComponent(
+      station.brand ?? station.name ?? "Station"
+    )}`,
+  };
+}
+
+function createPriceIcon(price: number) {
+  return L.divIcon({
+    className: "fuel-price-pin",
+    html: `<div class="fuel-price-pin__label">${price.toFixed(3)} EUR</div><div class="fuel-price-pin__dot"></div>`,
+    iconSize: [78, 36],
+    iconAnchor: [39, 34],
+    popupAnchor: [0, -26],
+  });
+}
+
 export function StationMap({ stations, center }: StationMapProps) {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
@@ -77,18 +107,24 @@ export function StationMap({ stations, center }: StationMapProps) {
         return;
       }
 
+      const mapsLinks = getMapsLinks(station);
       const popup = `
-        <div style="min-width: 180px">
-          <strong>${station.brand ?? station.name ?? "Station"}</strong><br />
-          <span>${station.address}</span><br />
-          <span>${station.postalCode ?? ""} ${station.city}</span><br />
-          <strong>${station.price.toFixed(3)} EUR/L</strong>
+        <div class="fuel-popup">
+          <div class="fuel-popup__eyebrow">Station</div>
+          <div class="fuel-popup__title">${station.brand ?? station.name ?? "Station"}</div>
+          <div class="fuel-popup__address">${station.address}</div>
+          <div class="fuel-popup__city">${station.postalCode ?? ""} ${station.city}</div>
+          <div class="fuel-popup__price">${station.price.toFixed(3)} EUR/L</div>
+          <div class="fuel-popup__actions">
+            <a class="fuel-popup__button" href="${mapsLinks.google}" target="_blank" rel="noreferrer">Google Maps</a>
+            <a class="fuel-popup__button fuel-popup__button--secondary" href="${mapsLinks.apple}" target="_blank" rel="noreferrer">Plans</a>
+          </div>
         </div>
       `;
 
-      const marker = L.marker([station.latitude, station.longitude], { icon: stationIcon }).bindPopup(
-        popup
-      );
+      const marker = L.marker([station.latitude, station.longitude], {
+        icon: createPriceIcon(station.price),
+      }).bindPopup(popup);
       marker.addTo(map);
       markersRef.current.push(marker);
       bounds.push([station.latitude, station.longitude]);

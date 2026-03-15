@@ -52,3 +52,115 @@ input {
   background: #f8fafc;
   box-shadow: 0 0 0 5px rgba(248, 250, 252, 0.18);
 }
+
+.fuel-price-pin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.fuel-price-pin__label {
+  border-radius: 9999px;
+  border: 1px solid rgba(74, 222, 128, 0.25);
+  background: rgba(8, 16, 20, 0.96);
+  color: #f8fafc;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.25);
+}
+
+.fuel-price-pin__dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  border: 3px solid rgba(8, 16, 20, 0.85);
+  background: #4ade80;
+  box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.18);
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: rgba(8, 16, 20, 0.96);
+  color: #e2e8f0;
+}
+
+.leaflet-popup-content-wrapper {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+}
+
+.leaflet-popup-content {
+  margin: 0;
+}
+
+.leaflet-container a.leaflet-popup-close-button {
+  color: #94a3b8;
+  padding: 10px 12px 0 0;
+}
+
+.fuel-popup {
+  min-width: 220px;
+  padding: 16px;
+}
+
+.fuel-popup__eyebrow {
+  margin-bottom: 6px;
+  color: #4ade80;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.fuel-popup__title {
+  color: #f8fafc;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.fuel-popup__address,
+.fuel-popup__city {
+  margin-top: 4px;
+  color: #cbd5e1;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.fuel-popup__price {
+  margin-top: 14px;
+  color: #f8fafc;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.fuel-popup__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.fuel-popup__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: #4ade80;
+  color: #081014;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 9px 12px;
+  text-decoration: none;
+}
+
+.fuel-popup__button--secondary {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
